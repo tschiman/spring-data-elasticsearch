@@ -98,4 +98,9 @@ public class MappingElasticsearchEntityInformation<T, ID extends Serializable> e
 		}
 		return null;
 	}
+
+	@Override
+	public String getAlias() {
+		return entityMetadata.getAlias();
+	}
 }

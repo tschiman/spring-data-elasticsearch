@@ -57,6 +57,7 @@ public class SimpleElasticsearchPersistentEntity<T> extends BasicPersistentEntit
 	private String parentType;
 	private ElasticsearchPersistentProperty parentIdProperty;
 	private String settingPath;
+	private String alias;
 
 	public SimpleElasticsearchPersistentEntity(TypeInformation<T> typeInformation) {
 		super(typeInformation);
@@ -74,6 +75,7 @@ public class SimpleElasticsearchPersistentEntity<T> extends BasicPersistentEntit
 			this.replicas = typeInformation.getType().getAnnotation(Document.class).replicas();
 			this.refreshInterval = typeInformation.getType().getAnnotation(Document.class).refreshInterval();
 			this.indexStoreType = typeInformation.getType().getAnnotation(Document.class).indexStoreType();
+			this.alias = typeInformation.getType().getAnnotation(Document.class).alias();
 		}
 		if (clazz.isAnnotationPresent(Setting.class)) {
 			this.settingPath = typeInformation.getType().getAnnotation(Setting.class).settingPath();
@@ -132,6 +134,11 @@ public class SimpleElasticsearchPersistentEntity<T> extends BasicPersistentEntit
 	@Override
 	public String settingPath() {
 		return settingPath;
+	}
+
+	@Override
+	public String getAlias() {
+		return alias;
 	}
 
 	@Override

@@ -558,4 +558,6 @@ public interface ElasticsearchOperations {
 
 
 	<T> T query(SearchQuery query, ResultsExtractor<T> resultsExtractor);
+
+	<T> Boolean addAlias(Class<T> entityClass);
 }

@@ -80,6 +80,7 @@ public abstract class AbstractElasticsearchRepository<T, ID extends Serializable
 		try {
 			createIndex();
 			putMapping();
+			createAlias();
 		} catch (ElasticsearchException exception) {
 			LOGGER.error("failed to load elasticsearch nodes : " + exception.getDetailedMessage());
 		}
@@ -92,6 +93,8 @@ public abstract class AbstractElasticsearchRepository<T, ID extends Serializable
 	private void putMapping() {
 		elasticsearchOperations.putMapping(getEntityClass());
 	}
+
+	private void createAlias() { elasticsearchOperations.addAlias(getEntityClass()); }
 
 	@Override
 	public T findOne(ID id) {

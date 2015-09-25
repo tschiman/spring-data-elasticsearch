@@ -44,9 +44,11 @@ import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.metadata.AliasAction;
+import org.elasticsearch.cluster.metadata.AliasMetaData;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.collect.MapBuilder;
+import org.elasticsearch.common.collect.UnmodifiableIterator;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.query.FilterBuilder;
@@ -80,6 +82,7 @@ import org.springframework.data.elasticsearch.core.query.*;
 import org.springframework.data.mapping.PersistentProperty;
 import org.springframework.data.util.CloseableIterator;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -233,7 +236,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	public <T> T queryForObject(GetQuery query, Class<T> clazz, GetResultMapper mapper) {
 		ElasticsearchPersistentEntity<T> persistentEntity = getPersistentEntityFor(clazz);
 		GetResponse response = client
-				.prepareGet(persistentEntity.getIndexName(), persistentEntity.getIndexType(), query.getId()).execute()
+				.prepareGet(retrieveIndexNameOrAliasFromPersistentEntity(clazz)[0], persistentEntity.getIndexType(), query.getId()).execute()
 				.actionGet();
 
 		T entity = mapper.mapResult(response, clazz);
@@ -462,7 +465,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	}
 
 	private <T> CountRequestBuilder prepareCount(Query query, Class<T> clazz) {
-		String indexName[] = isNotEmpty(query.getIndices()) ? query.getIndices().toArray(new String[query.getIndices().size()]) : retrieveIndexNameFromPersistentEntity(clazz);
+		String indexName[] = isNotEmpty(query.getIndices()) ? query.getIndices().toArray(new String[query.getIndices().size()]) : retrieveIndexNameOrAliasFromPersistentEntity(clazz);
 		String types[] = isNotEmpty(query.getTypes()) ? query.getTypes().toArray(new String[query.getTypes().size()]) : retrieveTypeFromPersistentEntity(clazz);
 
 		Assert.notNull(indexName, "No index defined for Query");
@@ -897,7 +900,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 
 	private <T> SearchRequestBuilder prepareSearch(Query query, Class<T> clazz) {
 		if (query.getIndices().isEmpty()) {
-			query.addIndices(retrieveIndexNameFromPersistentEntity(clazz));
+			query.addIndices(retrieveIndexNameOrAliasFromPersistentEntity(clazz));
 		}
 		if (query.getTypes().isEmpty()) {
 			query.addTypes(retrieveTypeFromPersistentEntity(clazz));
@@ -938,7 +941,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 
 	private IndexRequestBuilder prepareIndex(IndexQuery query) {
 		try {
-			String indexName = isBlank(query.getIndexName()) ? retrieveIndexNameFromPersistentEntity(query.getObject()
+			String indexName = isBlank(query.getIndexName()) ? retrieveIndexNameOrAliasFromPersistentEntity(query.getObject()
 					.getClass())[0] : query.getIndexName();
 			String type = isBlank(query.getType()) ? retrieveTypeFromPersistentEntity(query.getObject().getClass())[0]
 					: query.getType();
@@ -1006,6 +1009,36 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 			aliasAction.indexRouting(query.getIndexRouting());
 		}
 		return client.admin().indices().prepareAliases().addAliasAction(aliasAction).execute().actionGet().isAcknowledged();
+	}
+
+	@Override
+	public <T> Boolean addAlias(Class<T> entityClass) {
+		String indexName = retrieveIndexNameFromPersistentEntity(entityClass)[0];
+		String aliasName = retrieveAliasFromPersistentEntity(entityClass)[0];
+
+		if (!StringUtils.isEmpty(aliasName)) {
+			Set<String> aliases = queryForAlias(aliasName);
+			if (!aliases.contains(aliasName)) {
+				AliasQuery aliasQuery = new AliasBuilder()
+						.withAliasName(aliasName)
+						.withIndexName(indexName)
+						.build();
+				addAlias(aliasQuery);
+				return true;
+			}
+
+			if (getIndiciesInAlias(entityClass).size() <= 0) {
+				AliasQuery aliasQuery = new AliasBuilder()
+						.withAliasName(aliasName)
+						.withIndexName(indexName)
+						.build();
+				addAlias(aliasQuery);
+				return true;
+			}
+			return false;
+		} else {
+			return false;
+		}
 	}
 
 	@Override
@@ -1077,6 +1110,24 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 		return null;
 	}
 
+	private String[] retrieveAliasFromPersistentEntity(Class clazz) {
+		if (clazz != null) {
+			return new String[]{getPersistentEntityFor(clazz).getAlias()};
+		}
+		return null;
+	}
+
+	private String[] retrieveIndexNameOrAliasFromPersistentEntity(Class clazz) {
+		if (clazz != null) {
+			if (retrieveAliasFromPersistentEntity(clazz)[0].length() > 0) {
+				return retrieveAliasFromPersistentEntity(clazz);
+			} else {
+				return retrieveIndexNameFromPersistentEntity(clazz);
+			}
+		}
+		return null;
+	}
+
 	private List<String> extractIds(SearchResponse response) {
 		List<String> ids = new ArrayList<String>();
 		for (SearchHit hit : response.getHits()) {
@@ -1143,6 +1194,25 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	}
 
 	public SuggestResponse suggest(SuggestBuilder.SuggestionBuilder<?> suggestion, Class clazz) {
-		return suggest(suggestion, retrieveIndexNameFromPersistentEntity(clazz));
+		return suggest(suggestion, retrieveIndexNameOrAliasFromPersistentEntity(clazz));
+	}
+
+	private <T> List<String> getIndiciesInAlias(Class<T> clazz) {
+
+		ImmutableOpenMap<String, ImmutableOpenMap<String, AliasMetaData>> indicies = client.admin().cluster()
+				.prepareState().execute()
+				.actionGet().getState()
+				.getMetaData().getAliases();
+
+		ImmutableOpenMap<String, AliasMetaData> alias = indicies.get(retrieveAliasFromPersistentEntity(clazz)[0]);
+
+		List<String> indexesInAlias = new ArrayList<String>();
+
+		UnmodifiableIterator<String> iterator = alias.keysIt();
+		while (iterator.hasNext()) {
+			indexesInAlias.add(iterator.next());
+		}
+
+		return indexesInAlias;
 	}
 }

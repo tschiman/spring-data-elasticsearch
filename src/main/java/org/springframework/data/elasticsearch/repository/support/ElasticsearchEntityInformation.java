@@ -36,4 +36,6 @@ public interface ElasticsearchEntityInformation<T, ID extends Serializable> exte
 	Long getVersion(T entity);
 
 	String getParentId(T entity);
+
+	String getAlias();
 }
